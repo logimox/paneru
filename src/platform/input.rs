@@ -519,34 +519,44 @@ impl InputHandler {
                 let x_sum: f64 = x_deltas.iter().sum();
                 let y_sum: f64 = y_deltas.iter().sum();
 
-                if x_sum.abs() >= y_sum.abs() {
-                    // Horizontal dominant: use existing swipe path
-                    if x_deltas.iter().all(|p| p.abs() > SWIPE_THRESHOLD) {
-                        _ = events.send(Event::Swipe {
-                            delta: x_sum,
-                            fingers: x_deltas.len(),
-                        });
-                        self.last_swipe_time = Some(Instant::now());
-                    }
-                } else if y_deltas.iter().all(|p| p.abs() > SWIPE_THRESHOLD) {
-                    if !self.config.swipe_vertical() {
-                        // Do not intercept the vertical swipe
-                        return false;
-                    }
-                    // Vertical dominant: send vertical swipe, intercept the event
-                    _ = events.send(Event::VerticalSwipe {
-                        delta: y_sum,
-                        fingers: y_deltas.len(),
+                if x_sum.abs() >= y_sum.abs()
+                    && x_deltas.iter().all(|delta| delta.abs() > SWIPE_THRESHOLD)
+                {
+                    // Horizontal dominant: Paneru owns this gesture.
+                    _ = events.send(Event::Swipe {
+                        delta: x_sum,
+                        fingers: x_deltas.len(),
                     });
                     self.last_swipe_time = Some(Instant::now());
+                    self.finger_position = Some(fingers);
+                    return true;
+                }
+
+                if y_deltas.iter().all(|delta| delta.abs() > SWIPE_THRESHOLD) {
+                    if self.config.swipe_vertical() {
+                        // Vertical dominant and configured for Paneru.
+                        _ = events.send(Event::VerticalSwipe {
+                            delta: y_sum,
+                            fingers: y_deltas.len(),
+                        });
+                        self.last_swipe_time = Some(Instant::now());
+                        self.finger_position = Some(fingers);
+                        return true;
+                    }
+
+                    // Do not claim vertical swipes when they are disabled. In
+                    // particular, do not swallow the initial/undecided events:
+                    // macOS needs those to recognize its own three-finger action.
+                    self.finger_position = Some(fingers);
+                    return false;
                 }
             }
         }
         self.finger_position = Some(fingers);
 
-        // If we have 3 or more fingers on the trackpad, we intercept the event
-        // to prevent it from being interpreted as a scroll by the OS.
-        true
+        // The gesture has not acquired a horizontal Paneru direction yet. Let
+        // macOS see it, rather than preemptively preventing its own gestures.
+        false
     }
 
     /// Handles key press events. It determines the modifier mask and attempts to find a matching keybinding in the configuration.
